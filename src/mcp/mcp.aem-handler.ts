@@ -148,6 +148,22 @@ export class MCPRequestHandler {
           return await this.aemConnector.manageExperienceFragment(params);
         case 'manageExperienceFragmentVariation':
           return await this.aemConnector.manageExperienceFragmentVariation(params);
+        // Content Review
+        case 'getReviewableContent':
+          return await this.aemConnector.getReviewableContent(params);
+        case 'runContentReview':
+          return await this.aemConnector.runContentReview(params);
+        case 'applyReviewSuggestion':
+          return await this.aemConnector.applyReviewSuggestion(params);
+        // Design Tokens
+        case 'fetchDesignTokens':
+          return await this.aemConnector.fetchDesignTokens(params);
+        case 'transformTokensToCss':
+          return await this.aemConnector.transformTokensToCss(params);
+        case 'diffTokens':
+          return await this.aemConnector.diffTokens(params);
+        case 'writeTokensToClientlib':
+          return await this.aemConnector.writeTokensToClientlib(params);
         default:
           throw new Error(`Unknown method: ${method}`);
       }

@@ -1,7 +1,7 @@
 import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema, InitializeRequestSchema, LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from '@modelcontextprotocol/sdk/types.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { tools, injectInstanceParam, toolAnnotations } from './mcp.tools.js';
-import { getResourceDefinitions, readResource } from './mcp.resources.js';
+import { getResourceDefinitions, readResource, getGovernanceDefinitions, readGovernanceResource } from './mcp.resources.js';
 import { InstanceRegistry } from './mcp.instances.js';
 import { CliParams } from '../types.js';
 import { LOGGER } from '../utils/logger.js';
@@ -55,7 +55,10 @@ export const createMCPServer = (cliParams: CliParams) => {
   });
 
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
-    const resources = instanceNames.flatMap((name) => getResourceDefinitions(name));
+    const resources = [
+      ...instanceNames.flatMap((name) => getResourceDefinitions(name)),
+      ...getGovernanceDefinitions(),
+    ];
     LOGGER.log('Received ListResourcesRequest', resources);
     return { resources };
   });
@@ -63,6 +66,14 @@ export const createMCPServer = (cliParams: CliParams) => {
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
     LOGGER.log('Received ReadResourceRequest', uri);
+
+    // Governance resources use a fixed (instance-independent) scheme. Short-circuit
+    // before the per-instance lookup, since "governance" is not an instance name.
+    if (uri.startsWith('aem://governance/')) {
+      const connector = registry.getHandler(undefined).aemConnector;
+      const content = await readGovernanceResource(uri, connector);
+      return { contents: [content] };
+    }
 
     // Parse instance from URI: aem://{instance}/{key}
     const match = uri.match(/^aem:\/\/([^/]+)\//);

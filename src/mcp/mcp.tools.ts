@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { isValidJcrPath, JCR_PATH_REFINE_MESSAGE } from '../utils/jcr-path.js';
 
 type ToolDefinition = {
   name: string;
@@ -10,6 +11,10 @@ type ToolDefinition = {
 // ─── Shared Fields ────────────────────────────────────
 const verbosityField = z.enum(['summary', 'standard', 'full']).default('standard').optional()
   .describe('Response detail level: summary (paths/names only), standard (default, minus JCR internals), full (everything)');
+
+// JCR path field with the shared security validation applied in the Zod refine.
+const jcrPath = (description: string) =>
+  z.string().refine(isValidJcrPath, { message: JCR_PATH_REFINE_MESSAGE }).describe(description);
 
 // ─── Content & Text ───────────────────────────────────
 const contentSchemas = {
@@ -295,6 +300,54 @@ const experienceFragmentSchemas = {
   }).passthrough(),
 };
 
+// ─── Content Review ───────────────────────────────────
+const contentReviewSchemas = {
+  getReviewableContent: z.object({
+    path: jcrPath('JCR path to the page or content fragment'),
+    type: z.enum(['page', 'content-fragment']).describe('Whether the path is a page or a content fragment'),
+  }).passthrough(),
+  runContentReview: z.object({
+    path: jcrPath('JCR path to the page or content fragment'),
+    type: z.enum(['page', 'content-fragment']).describe('Whether the path is a page or a content fragment'),
+    ruleset: z.enum(['brand-voice', 'seo', 'token-compliance', 'all']).describe('Named governance ruleset(s) to review against'),
+  }).passthrough(),
+  applyReviewSuggestion: z.object({
+    path: jcrPath('JCR path to the page or content fragment'),
+    type: z.enum(['page', 'content-fragment']).describe('Whether the path is a page or a content fragment'),
+    field: z.string().describe('Field name to update (e.g. jcr:title, bodyText)'),
+    value: z.string().describe('New value to write'),
+    dryRun: z.boolean().default(false).optional().describe('If true, return what would be written without writing it'),
+  }).passthrough(),
+};
+
+// ─── Design Tokens ────────────────────────────────────
+const tokenEntrySchema = z.object({
+  name: z.string(),
+  value: z.union([z.string(), z.number(), z.boolean()]),
+  type: z.string().optional(),
+  collection: z.string().optional(),
+}).passthrough();
+
+const designTokenSchemas = {
+  fetchDesignTokens: z.object({
+    source: z.enum(['figma', 'file']).describe('Where to fetch tokens from'),
+    filePath: z.string().optional().describe('Absolute path to a token JSON file (only for source="file")'),
+  }).passthrough(),
+  transformTokensToCss: z.object({
+    tokens: z.array(tokenEntrySchema).describe('Token entries as returned by fetchDesignTokens'),
+    prefix: z.string().default('--').optional().describe('CSS variable prefix (default "--")'),
+    scope: z.string().default(':root').optional().describe('CSS selector scope (default ":root")'),
+  }).passthrough(),
+  diffTokens: z.object({
+    incomingCss: z.string().describe('CSS string from transformTokensToCss'),
+  }).passthrough(),
+  writeTokensToClientlib: z.object({
+    css: z.string().describe('CSS to write to the tokens clientlib'),
+    dryRun: z.boolean().default(false).optional().describe('If true, return what would be written without writing'),
+    createIfMissing: z.boolean().default(false).optional().describe('If true, create the parent node hierarchy if it does not exist'),
+  }).passthrough(),
+};
+
 // ─── Combined Schemas ─────────────────────────────────
 export const toolSchemas = {
   ...contentSchemas,
@@ -307,6 +360,8 @@ export const toolSchemas = {
   ...workflowSchemas,
   ...contentFragmentSchemas,
   ...experienceFragmentSchemas,
+  ...contentReviewSchemas,
+  ...designTokenSchemas,
 } as const;
 
 export type ToolName = keyof typeof toolSchemas;
@@ -363,6 +418,15 @@ export const toolDescriptions: Record<ToolName, string> = {
   listExperienceFragments: 'List experience fragments under a path with optional template filter',
   manageExperienceFragment: 'Create, update, or delete an experience fragment. Auto-creates master variation on create.',
   manageExperienceFragmentVariation: 'Create, update, or delete a variation within an experience fragment',
+  // Content Review
+  getReviewableContent: 'Fetch a page or Content Fragment from AEM and return a clean, flattened representation suitable for content review. Strips JCR internals, resolves fragment references one level deep.',
+  runContentReview: 'Review AEM content against a named ruleset using Claude. Returns structured findings with severity, field, issue, and suggested fix.',
+  applyReviewSuggestion: 'Apply a single suggestion from a content review back to AEM. For pages, uses the Sling POST servlet. For content fragments, uses the Assets HTTP API PATCH.',
+  // Design Tokens
+  fetchDesignTokens: 'Fetch design tokens from Figma Variables API or from a local JSON file and return them in W3C Design Token format.',
+  transformTokensToCss: 'Convert a token array (from fetchDesignTokens) into a CSS custom properties string. Pure transformation, no AEM or Figma calls.',
+  diffTokens: 'Compare incoming tokens (as CSS string) against what is currently stored in AEM\'s token clientlib. Returns added, changed, and removed variables.',
+  writeTokensToClientlib: 'Write a CSS string to AEM\'s design token client library file. Requires confirmation via dryRun before writing.',
 };
 
 /**
@@ -472,4 +536,13 @@ export const toolAnnotations: Record<string, { group: string; readOnly: boolean;
   listExperienceFragments: { group: 'fragments-experience', readOnly: true, complexity: 'low' },
   manageExperienceFragment: { group: 'fragments-experience', readOnly: false, complexity: 'medium' },
   manageExperienceFragmentVariation: { group: 'fragments-experience', readOnly: false, complexity: 'medium' },
+  // Content Review
+  getReviewableContent: { group: 'content-review', readOnly: true, complexity: 'medium' },
+  runContentReview: { group: 'content-review', readOnly: true, complexity: 'high' },
+  applyReviewSuggestion: { group: 'content-review', readOnly: false, complexity: 'medium' },
+  // Design Tokens
+  fetchDesignTokens: { group: 'design-tokens', readOnly: true, complexity: 'medium' },
+  transformTokensToCss: { group: 'design-tokens', readOnly: true, complexity: 'low' },
+  diffTokens: { group: 'design-tokens', readOnly: true, complexity: 'medium' },
+  writeTokensToClientlib: { group: 'design-tokens', readOnly: false, complexity: 'high' },
 };

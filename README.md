@@ -181,6 +181,65 @@ The server exposes read-only MCP resources so agents can discover AEM catalogs w
 
 Resources return summary data only. In multi-instance mode, each instance gets its own set of resource URIs.
 
+## Content Review & Design Tokens
+
+This fork adds an LLM-driven **content review** workflow (review AEM content against governance
+rulesets with Claude, then apply fixes) and a **design-token** sync pipeline (pull tokens from
+Figma, render CSS custom properties, diff against and write the AEM tokens clientlib). These build
+on the existing authenticated AEM client — they reuse the same `--host` / `--user` / `--pass` /
+`--id` / `--secret` configuration and add a few extra environment variables.
+
+### Additional environment variables
+
+| Variable | Purpose |
+|---|---|
+| `ANTHROPIC_API_KEY` | API key for the content-review LLM calls (`runContentReview`). |
+| `FIGMA_ACCESS_TOKEN` | Figma personal access token (scope `file_variables:read`) for `fetchDesignTokens` with `source=figma`. |
+| `FIGMA_FILE_KEY` | Figma file key to pull variables from. |
+| `AEM_TOKENS_CLIENTLIB_PATH` | JCR path to the tokens clientlib CSS file, e.g. `/apps/myproject/clientlibs/tokens/css/tokens.css`. Used by `diffTokens` and `writeTokensToClientlib`. |
+| `AEM_GOVERNANCE_PATH` | JCR path where the ruleset JSON files live, e.g. `/conf/myproject/governance`. |
+
+The content-review model is pinned to `claude-haiku-4-5-20251001` (fast and cheap for review).
+
+### Tools
+
+| Tool | Description |
+|---|---|
+| `getReviewableContent` | Fetch a page (`.infinity.json`) or content fragment (Assets HTTP API) and return a clean, flattened representation (`{ path, type, title, fields, rawText }`) — JCR/CQ/Sling internals stripped (except `jcr:title`/`jcr:description`). |
+| `runContentReview` | Review the content against a named ruleset (`brand-voice`, `seo`, `token-compliance`, or `all`) using Claude. Returns `{ score, findings[], summary }`; an unparseable LLM response is reported as an error finding rather than throwing. |
+| `applyReviewSuggestion` | Apply a single suggestion back to AEM. Pages → Sling POST servlet; content fragments → Assets HTTP API. Supports `dryRun`. |
+| `fetchDesignTokens` | Fetch design tokens from the Figma Variables API (one-level alias resolution) or a local JSON file → `{ source, count, tokens[] }`. |
+| `transformTokensToCss` | Pure transform: token array → CSS custom properties string (kebab-cased names, configurable `prefix`/`scope`). No AEM or Figma calls. |
+| `diffTokens` | Diff an incoming CSS string against the current AEM tokens clientlib → `{ added, removed, changed, unchanged }` (a 404 on the clientlib is treated as empty). |
+| `writeTokensToClientlib` | Write a CSS string to the tokens clientlib via the Sling POST servlet. Supports `dryRun` and `createIfMissing`. |
+
+### Governance resources
+
+Three additional read-only MCP resources expose the governance rulesets (instance-independent —
+they read from `${AEM_GOVERNANCE_PATH}/<file>.json` via the default instance). A missing node
+returns an empty object `{}` with a logged warning rather than an error.
+
+| Resource URI | Source file |
+|---|---|
+| `aem://governance/brand-voice` | `${AEM_GOVERNANCE_PATH}/brand-voice.json` |
+| `aem://governance/seo-rules` | `${AEM_GOVERNANCE_PATH}/seo-rules.json` |
+| `aem://governance/token-compliance` | `${AEM_GOVERNANCE_PATH}/token-compliance.json` |
+
+### Path safety
+
+Every tool parameter that accepts a JCR path is validated by a shared `validateJcrPath` utility
+(`src/utils/jcr-path.ts`): paths containing `..` are rejected, and paths must start with
+`/content`, `/conf`, or `/apps/myproject`.
+
+### Tests
+
+The content-review and design-token tools have a dedicated Jest suite under `src/__tests__/`
+(separate from the upstream `node --test` suite). Run it with:
+
+```sh
+npm run test:jest
+```
+
 ## API Documentation
 
 For detailed API documentation, please refer to the [API Docs](docs/API.md).
