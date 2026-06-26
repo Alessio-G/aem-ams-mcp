@@ -1,12 +1,18 @@
-# AEM MCP Server (aem-mcp-server)
+# aem-ams-mcp — AEM MCP Server (fork)
 
-[![Version](https://img.shields.io/npm/v/aem-mcp-server.svg)](https://npmjs.org/package/aem-mcp-server)
-[![Release Status](https://github.com/easingthemes/aem-mcp-server/actions/workflows/release.yml/badge.svg)](https://github.com/easingthemes/aem-mcp-server/actions/workflows/release.yml)
-[![CodeQL Analysis](https://github.com/easingthemes/aem-mcp-server/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/easingthemes/aem-mcp-server/actions/workflows/codeql-analysis.yml)
-[![semver: semantic-release](https://img.shields.io/badge/semver-semantic--release-blue.svg)](https://github.com/semantic-release/semantic-release)
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![Fork of easingthemes/aem-mcp-server](https://img.shields.io/badge/fork%20of-easingthemes%2Faem--mcp--server-blue.svg)](https://github.com/easingthemes/aem-mcp-server)
 
-
+> **🍴 This is a fork of [easingthemes/aem-mcp-server](https://github.com/easingthemes/aem-mcp-server).**
+> It adds an LLM-driven **content-review** workflow and a **Figma → AEM design-token** pipeline
+> (7 tools + 3 governance resources) on top of the upstream tools, targeting **AEM AMS 6.5 LTS**.
+> All upstream functionality is preserved — no upstream tools were removed or modified.
+>
+> Fork modifications by Alessio Galletti, June 2026, distributed under the upstream **AGPL-3.0-only**
+> license (see [LICENSE](LICENSE)). The upstream documentation below is retained as-is; the
+> fork-specific additions are documented under
+> [Content Review & Design Tokens](#content-review--design-tokens). Upstream npm-package and CI
+> badges have been removed because they reflect the upstream project, not this fork.
 
 AEM MCP Server is a full-featured Model Context Protocol (MCP) server for Adobe Experience Manager (AEM). 
 It provides a simple integration with any AI Agent.
@@ -31,6 +37,32 @@ This project is designed for non-technical persons who want to manage AEM via na
 ### Prerequisites
 - Node.js 20.19.0+ || 22.12.0+ || 23+
 - Access to an AEM instance (local or remote)
+
+> **⚠️ Running this fork:** This fork is **not published to npm**. The `npx aem-mcp-server` and
+> `npm install -g aem-mcp-server` commands shown below install the **upstream** package, which does
+> **not** include the content-review / design-token additions. To run *this* fork, build from source
+> and point your MCP client at the local entry point:
+>
+> ```sh
+> git clone https://github.com/Alessio-G/aem-ams-mcp.git && cd aem-ams-mcp
+> npm install && npm run build
+> ```
+>
+> Then in your MCP config use the local build instead of the `npx` form:
+>
+> ```json
+> {
+>   "mcpServers": {
+>     "AEM": {
+>       "command": "node",
+>       "args": ["/abs/path/to/aem-ams-mcp/dist/cli.js", "-t", "stdio", "-H", "http://localhost:4502", "-u", "admin", "-p", "admin"]
+>     }
+>   }
+> }
+> ```
+>
+> Set `ANTHROPIC_API_KEY` (and the Figma / AEM token-path vars) in the environment for the
+> content-review and design-token tools — see [Content Review & Design Tokens](#content-review--design-tokens).
 
 ### Stdio Transport (recommended)
 
@@ -124,7 +156,7 @@ All tools will get an `instance` parameter to target a specific instance.
 
 ## Features
 
-- **57 MCP Tools** covering pages, components, assets, workflows, content fragments, and experience fragments
+- **58 MCP Tools** — the upstream tools (pages, components, assets, workflows, content fragments, experience fragments) **plus 7 added by this fork** for content review and design tokens (see [Content Review & Design Tokens](#content-review--design-tokens))
 - **MCP Resources** — agents discover components, sites, templates, and workflow models upfront via `resources/list`, eliminating discovery roundtrips
 - **Tool Annotations** — every tool tagged with `group`, `readOnly`, and `complexity` so agents can make smarter tool selection decisions
 - **Response Verbosity** — `verbosity` parameter (`summary`/`standard`/`full`) on content-reading tools strips JCR internals and truncates long text

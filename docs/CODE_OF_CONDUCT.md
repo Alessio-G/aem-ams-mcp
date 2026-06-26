@@ -1,5 +1,8 @@
 # Cognizant Netcentric Code of Conduct
 
+> **Fork note:** This Code of Conduct is inherited unchanged from the upstream project,
+> [easingthemes/aem-mcp-server](https://github.com/easingthemes/aem-mcp-server).
+
 ## Our Pledge
 
 In the interest of fostering an open and welcoming environment, we as

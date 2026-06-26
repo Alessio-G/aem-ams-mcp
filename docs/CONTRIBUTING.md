@@ -1,5 +1,9 @@
 # Contributing
 
+> **Fork note:** These guidelines are inherited from the upstream project,
+> [easingthemes/aem-mcp-server](https://github.com/easingthemes/aem-mcp-server). For this fork
+> (aem-ams-mcp), contributions and issues go to the fork's repository.
+
 Thanks for choosing to contribute!
 
 The following are a set of guidelines to follow when contributing to this project.
