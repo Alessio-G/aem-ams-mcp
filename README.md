@@ -1,12 +1,18 @@
-# AEM MCP Server (aem-mcp-server)
+# aem-ams-mcp — AEM MCP Server (fork)
 
-[![Version](https://img.shields.io/npm/v/aem-mcp-server.svg)](https://npmjs.org/package/aem-mcp-server)
-[![Release Status](https://github.com/easingthemes/aem-mcp-server/actions/workflows/release.yml/badge.svg)](https://github.com/easingthemes/aem-mcp-server/actions/workflows/release.yml)
-[![CodeQL Analysis](https://github.com/easingthemes/aem-mcp-server/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/easingthemes/aem-mcp-server/actions/workflows/codeql-analysis.yml)
-[![semver: semantic-release](https://img.shields.io/badge/semver-semantic--release-blue.svg)](https://github.com/semantic-release/semantic-release)
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![Fork of easingthemes/aem-mcp-server](https://img.shields.io/badge/fork%20of-easingthemes%2Faem--mcp--server-blue.svg)](https://github.com/easingthemes/aem-mcp-server)
 
-
+> **🍴 This is a fork of [easingthemes/aem-mcp-server](https://github.com/easingthemes/aem-mcp-server).**
+> It adds an LLM-driven **content-review** workflow and a **Figma → AEM design-token** pipeline
+> (7 tools + 3 governance resources) on top of the upstream tools, targeting **AEM AMS 6.5 LTS**.
+> All upstream functionality is preserved — no upstream tools were removed or modified.
+>
+> Fork modifications by Alessio Galletti, June 2026, distributed under the upstream **AGPL-3.0-only**
+> license (see [LICENSE](LICENSE)). The upstream documentation below is retained as-is; the
+> fork-specific additions are documented under
+> [Content Review & Design Tokens](#content-review--design-tokens). Upstream npm-package and CI
+> badges have been removed because they reflect the upstream project, not this fork.
 
 AEM MCP Server is a full-featured Model Context Protocol (MCP) server for Adobe Experience Manager (AEM). 
 It provides a simple integration with any AI Agent.
@@ -31,6 +37,32 @@ This project is designed for non-technical persons who want to manage AEM via na
 ### Prerequisites
 - Node.js 20.19.0+ || 22.12.0+ || 23+
 - Access to an AEM instance (local or remote)
+
+> **⚠️ Running this fork:** This fork is **not published to npm**. The `npx aem-mcp-server` and
+> `npm install -g aem-mcp-server` commands shown below install the **upstream** package, which does
+> **not** include the content-review / design-token additions. To run *this* fork, build from source
+> and point your MCP client at the local entry point:
+>
+> ```sh
+> git clone https://github.com/Alessio-G/aem-ams-mcp.git && cd aem-ams-mcp
+> npm install && npm run build
+> ```
+>
+> Then in your MCP config use the local build instead of the `npx` form:
+>
+> ```json
+> {
+>   "mcpServers": {
+>     "AEM": {
+>       "command": "node",
+>       "args": ["/abs/path/to/aem-ams-mcp/dist/cli.js", "-t", "stdio", "-H", "http://localhost:4502", "-u", "admin", "-p", "admin"]
+>     }
+>   }
+> }
+> ```
+>
+> Set `ANTHROPIC_API_KEY` (and the Figma / AEM token-path vars) in the environment for the
+> content-review and design-token tools — see [Content Review & Design Tokens](#content-review--design-tokens).
 
 ### Stdio Transport (recommended)
 
@@ -124,7 +156,7 @@ All tools will get an `instance` parameter to target a specific instance.
 
 ## Features
 
-- **57 MCP Tools** covering pages, components, assets, workflows, content fragments, and experience fragments
+- **58 MCP Tools** — the upstream tools (pages, components, assets, workflows, content fragments, experience fragments) **plus 7 added by this fork** for content review and design tokens (see [Content Review & Design Tokens](#content-review--design-tokens))
 - **MCP Resources** — agents discover components, sites, templates, and workflow models upfront via `resources/list`, eliminating discovery roundtrips
 - **Tool Annotations** — every tool tagged with `group`, `readOnly`, and `complexity` so agents can make smarter tool selection decisions
 - **Response Verbosity** — `verbosity` parameter (`summary`/`standard`/`full`) on content-reading tools strips JCR internals and truncates long text
@@ -180,6 +212,65 @@ The server exposes read-only MCP resources so agents can discover AEM catalogs w
 | `aem://{instance}/workflow-models` | Workflow models (ID, title, description) |
 
 Resources return summary data only. In multi-instance mode, each instance gets its own set of resource URIs.
+
+## Content Review & Design Tokens
+
+This fork adds an LLM-driven **content review** workflow (review AEM content against governance
+rulesets with Claude, then apply fixes) and a **design-token** sync pipeline (pull tokens from
+Figma, render CSS custom properties, diff against and write the AEM tokens clientlib). These build
+on the existing authenticated AEM client — they reuse the same `--host` / `--user` / `--pass` /
+`--id` / `--secret` configuration and add a few extra environment variables.
+
+### Additional environment variables
+
+| Variable | Purpose |
+|---|---|
+| `ANTHROPIC_API_KEY` | API key for the content-review LLM calls (`runContentReview`). |
+| `FIGMA_ACCESS_TOKEN` | Figma personal access token (scope `file_variables:read`) for `fetchDesignTokens` with `source=figma`. |
+| `FIGMA_FILE_KEY` | Figma file key to pull variables from. |
+| `AEM_TOKENS_CLIENTLIB_PATH` | JCR path to the tokens clientlib CSS file, e.g. `/apps/myproject/clientlibs/tokens/css/tokens.css`. Used by `diffTokens` and `writeTokensToClientlib`. |
+| `AEM_GOVERNANCE_PATH` | JCR path where the ruleset JSON files live, e.g. `/conf/myproject/governance`. |
+
+The content-review model is pinned to `claude-haiku-4-5-20251001` (fast and cheap for review).
+
+### Tools
+
+| Tool | Description |
+|---|---|
+| `getReviewableContent` | Fetch a page (`.infinity.json`) or content fragment (Assets HTTP API) and return a clean, flattened representation (`{ path, type, title, fields, rawText }`) — JCR/CQ/Sling internals stripped (except `jcr:title`/`jcr:description`). |
+| `runContentReview` | Review the content against a named ruleset (`brand-voice`, `seo`, `token-compliance`, or `all`) using Claude. Returns `{ score, findings[], summary }`; an unparseable LLM response is reported as an error finding rather than throwing. |
+| `applyReviewSuggestion` | Apply a single suggestion back to AEM. Pages → Sling POST servlet; content fragments → Assets HTTP API. Supports `dryRun`. |
+| `fetchDesignTokens` | Fetch design tokens from the Figma Variables API (one-level alias resolution) or a local JSON file → `{ source, count, tokens[] }`. |
+| `transformTokensToCss` | Pure transform: token array → CSS custom properties string (kebab-cased names, configurable `prefix`/`scope`). No AEM or Figma calls. |
+| `diffTokens` | Diff an incoming CSS string against the current AEM tokens clientlib → `{ added, removed, changed, unchanged }` (a 404 on the clientlib is treated as empty). |
+| `writeTokensToClientlib` | Write a CSS string to the tokens clientlib via the Sling POST servlet. Supports `dryRun` and `createIfMissing`. |
+
+### Governance resources
+
+Three additional read-only MCP resources expose the governance rulesets (instance-independent —
+they read from `${AEM_GOVERNANCE_PATH}/<file>.json` via the default instance). A missing node
+returns an empty object `{}` with a logged warning rather than an error.
+
+| Resource URI | Source file |
+|---|---|
+| `aem://governance/brand-voice` | `${AEM_GOVERNANCE_PATH}/brand-voice.json` |
+| `aem://governance/seo-rules` | `${AEM_GOVERNANCE_PATH}/seo-rules.json` |
+| `aem://governance/token-compliance` | `${AEM_GOVERNANCE_PATH}/token-compliance.json` |
+
+### Path safety
+
+Every tool parameter that accepts a JCR path is validated by a shared `validateJcrPath` utility
+(`src/utils/jcr-path.ts`): paths containing `..` are rejected, and paths must start with
+`/content`, `/conf`, or `/apps/myproject`.
+
+### Tests
+
+The content-review and design-token tools have a dedicated Jest suite under `src/__tests__/`
+(separate from the upstream `node --test` suite). Run it with:
+
+```sh
+npm run test:jest
+```
 
 ## API Documentation
 

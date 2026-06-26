@@ -6,6 +6,11 @@ import { filterNodeTree, filterProperties } from './aem.filter.js';
 import { ContentFragmentManager } from './aem.content-fragments.js';
 import { ExperienceFragmentManager } from './aem.experience-fragments.js';
 import { LOGGER } from '../utils/logger.js';
+import { validateJcrPath } from '../utils/jcr-path.js';
+import { aemGetJson, aemGetText, aemPostForm, aemPutJson, aemPostFile } from '../utils/aem-client.js';
+import { flattenPage, extractContentFragmentFields, runReview, type ReviewableContent, type ReviewResult } from '../tools/content-review.js';
+import { fetchFigmaTokens, readTokenFile, transformTokensToCss as buildTokensCss, computeTokenDiff, type TokenEntry, type DiffResult } from '../tools/design-tokens.js';
+import { config } from '../config.js';
 
 export interface AEMConnectorConfig {
   aem: {
@@ -3697,5 +3702,146 @@ export class AEMConnector {
   }
   async manageExperienceFragmentVariation(params: any): Promise<object> {
     return this.experienceFragments.manageExperienceFragmentVariation(params);
+  }
+
+  // ─── Content Review & Design Tokens ───────────────────
+
+  /**
+   * Read a governance ruleset JSON file from `${AEM_GOVERNANCE_PATH}/<file>.json`.
+   * Missing node / unconfigured path → `{}` with a warning (never throws).
+   */
+  async getGovernanceRuleset(file: string): Promise<{ data: Record<string, unknown>; warning?: string }> {
+    const base = config.AEM_GOVERNANCE_PATH;
+    if (!base) {
+      return { data: {}, warning: 'AEM_GOVERNANCE_PATH is not configured.' };
+    }
+    const path = `${base}/${file}.json`;
+    try {
+      const json = await aemGetJson(this.fetch, path);
+      return { data: json && typeof json === 'object' ? (json as Record<string, unknown>) : {} };
+    } catch (error: any) {
+      if (error?.status === 404) {
+        return { data: {}, warning: `Governance node not found: ${path}` };
+      }
+      return { data: {}, warning: `Failed to read ${path}: ${error.message}` };
+    }
+  }
+
+  async getReviewableContent(params: { path: string; type: 'page' | 'content-fragment' }): Promise<ReviewableContent> {
+    validateJcrPath(params.path);
+    if (params.type === 'page') {
+      const json = await aemGetJson(this.fetch, `${params.path}.infinity.json`);
+      const { title, fields, rawText } = flattenPage(json);
+      return { path: params.path, type: 'page', title, fields, rawText };
+    }
+    const json = await aemGetJson(this.fetch, `/api/assets${params.path}.json`);
+    const { title, fields, rawText } = extractContentFragmentFields(json);
+    return { path: params.path, type: 'content-fragment', title, fields, rawText };
+  }
+
+  async runContentReview(params: {
+    path: string;
+    type: 'page' | 'content-fragment';
+    ruleset: 'brand-voice' | 'seo' | 'token-compliance' | 'all';
+  }): Promise<ReviewResult & { path: string; type: string; ruleset: string }> {
+    validateJcrPath(params.path);
+    const content = await this.getReviewableContent({ path: params.path, type: params.type });
+
+    // Map the ruleset enum to the governance file base names (same files as the MCP resources).
+    const rulesetFiles: Record<string, string> = {
+      'brand-voice': 'brand-voice',
+      seo: 'seo-rules',
+      'token-compliance': 'token-compliance',
+    };
+    const selected = params.ruleset === 'all' ? Object.keys(rulesetFiles) : [params.ruleset];
+
+    const governance: Record<string, unknown> = {};
+    for (const name of selected) {
+      const { data } = await this.getGovernanceRuleset(rulesetFiles[name]);
+      governance[name] = data;
+    }
+
+    const result = await runReview(content, governance, params.ruleset);
+    return { path: params.path, type: params.type, ruleset: params.ruleset, ...result };
+  }
+
+  async applyReviewSuggestion(params: {
+    path: string;
+    type: 'page' | 'content-fragment';
+    field: string;
+    value: string;
+    dryRun?: boolean;
+  }): Promise<object> {
+    validateJcrPath(params.path);
+    if (params.dryRun) {
+      return { wouldWrite: { path: params.path, field: params.field, value: params.value } };
+    }
+    if (params.type === 'page') {
+      await aemPostForm(this.fetch, params.path, { [params.field]: params.value });
+    } else {
+      await aemPutJson(this.fetch, `/api/assets${params.path}`, {
+        class: 'aem/fragment',
+        properties: { elements: { [params.field]: { value: params.value } } },
+      });
+    }
+    return { success: true, path: params.path, field: params.field, written: params.value };
+  }
+
+  async fetchDesignTokens(params: { source: 'figma' | 'file'; filePath?: string }): Promise<object> {
+    let tokens: TokenEntry[];
+    if (params.source === 'figma') {
+      tokens = await fetchFigmaTokens();
+    } else {
+      if (!params.filePath) {
+        throw new Error('filePath is required when source="file". Suggestion: pass an absolute path to a token JSON file.');
+      }
+      tokens = await readTokenFile(params.filePath);
+    }
+    return { source: params.source, count: tokens.length, tokens };
+  }
+
+  async transformTokensToCss(params: { tokens: TokenEntry[]; prefix?: string; scope?: string }): Promise<object> {
+    return buildTokensCss(params.tokens, params.prefix, params.scope);
+  }
+
+  async diffTokens(params: { incomingCss: string }): Promise<DiffResult> {
+    const clientlibPath = config.AEM_TOKENS_CLIENTLIB_PATH;
+    if (!clientlibPath) {
+      throw new Error('AEM_TOKENS_CLIENTLIB_PATH is not configured. Suggestion: set it to the tokens clientlib CSS path.');
+    }
+    validateJcrPath(clientlibPath);
+    let currentCss = '';
+    try {
+      currentCss = await aemGetText(this.fetch, clientlibPath);
+    } catch (error: any) {
+      if (error?.status !== 404) throw error; // 404 → no current clientlib yet, treat as empty
+    }
+    return computeTokenDiff(params.incomingCss, currentCss);
+  }
+
+  async writeTokensToClientlib(params: { css: string; dryRun?: boolean; createIfMissing?: boolean }): Promise<object> {
+    const clientlibPath = config.AEM_TOKENS_CLIENTLIB_PATH;
+    if (!clientlibPath) {
+      throw new Error('AEM_TOKENS_CLIENTLIB_PATH is not configured. Suggestion: set it to the tokens clientlib CSS path.');
+    }
+    validateJcrPath(clientlibPath);
+    if (params.dryRun) {
+      return { wouldWrite: { path: clientlibPath, byteLength: params.css.length } };
+    }
+    if (params.createIfMissing) {
+      const parentPath = clientlibPath.substring(0, clientlibPath.lastIndexOf('/'));
+      try {
+        await aemPostForm(this.fetch, parentPath, { 'jcr:primaryType': 'nt:folder' });
+      } catch (error: any) {
+        LOGGER.warn(`createIfMissing: could not ensure parent ${parentPath}: ${error.message}`);
+      }
+    }
+    const response = await aemPostFile(this.fetch, clientlibPath, params.css, 'text/css');
+    if (!response.ok) {
+      throw new Error(
+        `Failed to write tokens clientlib (HTTP ${response.status}). Suggestion: verify write permissions and that ${clientlibPath} is writable via the Sling POST servlet.`,
+      );
+    }
+    return { success: true, path: clientlibPath, bytesWritten: params.css.length };
   }
 }

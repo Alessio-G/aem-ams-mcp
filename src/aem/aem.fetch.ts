@@ -398,7 +398,46 @@ export class AEMFetch {
           headers: new Headers(headers)
         });
       }
-      
+
+      return response;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * Performs a POST with a raw string body (NOT JSON-stringified) and an explicit
+   * Content-Type. Used for writing file content (e.g. a clientlib CSS file) to the
+   * Sling POST servlet. Retries once on 401. Returns the raw Response object.
+   * @param url Relative URL string
+   * @param body Raw request body (sent verbatim)
+   * @param contentType Content-Type header (e.g. 'text/css')
+   * @param options Fetch options
+   * @param timeout Optional timeout in ms
+   */
+  async postRaw(url: string, body: string, contentType: string, options: RequestInit = {}, timeout?: number): Promise<Response> {
+    if (!this.fetch) {
+      throw new Error('AEMFetch not initialized. Call await init() before making requests.');
+    }
+    const headers = options.headers instanceof Headers
+      ? new Headers(options.headers)
+      : new Headers(options.headers || {});
+    headers.set('Content-Type', contentType);
+
+    const fullUrl = this.buildUrlWithParams(url);
+    const { headers: _, ...optionsWithoutHeaders } = options;
+    const { timeoutId, signal } = this.getTimeoutOptions(timeout);
+    const reqInit: RequestInit = { ...optionsWithoutHeaders, method: 'POST', body, headers };
+    if (timeout) {
+      reqInit.signal = signal;
+    }
+
+    try {
+      let response = await this.fetch(fullUrl, reqInit);
+      if (response.status === 401) {
+        await this.refreshAuthToken();
+        response = await this.fetch(fullUrl, { ...reqInit, headers: new Headers(headers) });
+      }
       return response;
     } finally {
       if (timeoutId) clearTimeout(timeoutId);

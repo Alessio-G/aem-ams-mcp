@@ -1,3 +1,9 @@
+<!--
+  This is the UPSTREAM changelog for easingthemes/aem-mcp-server (semantic-release generated).
+  It is retained for historical reference. Changes made by this fork (aem-ams-mcp) are tracked in
+  the fork's git history, not here.
+-->
+
 ## [1.7.1](https://github.com/easingthemes/aem-mcp-server/compare/v1.7.0...v1.7.1) (2026-06-11)
 
 

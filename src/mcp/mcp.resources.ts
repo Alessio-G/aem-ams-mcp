@@ -40,6 +40,42 @@ export function getResourceDefinitions(instanceName: string): ResourceDefinition
   }));
 }
 
+// ─── Governance resources (instance-independent) ──────
+// These use a fixed `aem://governance/<key>` URI scheme (not per-instance) and
+// read ruleset JSON from ${AEM_GOVERNANCE_PATH}/<key>.json via the default
+// instance's authenticated connector.
+const GOVERNANCE_CATALOG = [
+  { key: 'brand-voice', name: 'Governance: Brand Voice', description: 'Brand voice ruleset (brand-voice.json)' },
+  { key: 'seo-rules', name: 'Governance: SEO Rules', description: 'SEO ruleset (seo-rules.json)' },
+  { key: 'token-compliance', name: 'Governance: Token Compliance', description: 'Design-token compliance ruleset (token-compliance.json)' },
+] as const;
+
+export function getGovernanceDefinitions(): ResourceDefinition[] {
+  return GOVERNANCE_CATALOG.map((r) => ({
+    uri: `aem://governance/${r.key}`,
+    name: r.name,
+    description: r.description,
+    mimeType: 'application/json',
+  }));
+}
+
+export async function readGovernanceResource(
+  uri: string,
+  connector: AEMConnector,
+): Promise<{ uri: string; mimeType: string; text: string }> {
+  const match = uri.match(/^aem:\/\/governance\/(.+)$/);
+  const key = match?.[1];
+  if (!key || !GOVERNANCE_CATALOG.some((r) => r.key === key)) {
+    return { uri, mimeType: 'application/json', text: JSON.stringify({ error: `Unknown governance resource: ${uri}` }) };
+  }
+  // getGovernanceRuleset never throws: missing node / unconfigured path → {} + warning.
+  const { data, warning } = await connector.getGovernanceRuleset(key);
+  if (warning) {
+    LOGGER.warn(`Governance resource ${uri}: ${warning}`);
+  }
+  return { uri, mimeType: 'application/json', text: JSON.stringify(data, null, 2) };
+}
+
 function extractSummary(result: any, resourceKey: string): object {
   // All connector methods wrap in createSuccessResponse — extract the data payload
   const data = result?.data ?? result;

@@ -1,5 +1,10 @@
 # AEM MCP Server API Reference
 
+> **Fork note:** This is the upstream API reference, inherited from
+> [easingthemes/aem-mcp-server](https://github.com/easingthemes/aem-mcp-server). The 7 tools and 3
+> governance resources added by this fork (content review + design tokens) are documented in the
+> [README → Content Review & Design Tokens](../README.md#content-review--design-tokens), not here.
+
 ## MCP Resources
 
 The server exposes read-only resources via `resources/list` and `resources/read`:
